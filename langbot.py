@@ -25,7 +25,7 @@ GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 REDIS_URL = os.getenv('REDIS_URL')
 
 # Initialize Redis client
-redis_client = redis.from_url(REDIS_URL, ssl=True)
+redis_client = redis.from_url(REDIS_URL)
 
 # Initialize Google client (using OpenAI client)
 client = OpenAI(
