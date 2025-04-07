@@ -8,6 +8,7 @@ from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, Callb
 from flask import Flask
 import redis
 import urllib.parse
+import time
 
 # Load environment variables
 load_dotenv()
@@ -37,6 +38,12 @@ redis_client = redis.Redis(
     password=redis_password,
     ssl=True,
 )
+
+# In-memory cache for user settings and chat members
+user_settings_cache = {}  # Store user settings: {user_id_str: settings}
+chat_members_cache = {}   # Store chat members: {chat_id_str: set(user_id_str)}
+cache_last_updated = 0    # Timestamp when cache was last updated
+CACHE_TTL = 3600          # Cache time-to-live in seconds (1 hour)
 
 # Initialize Google client (using OpenAI client)
 client = OpenAI(
@@ -73,14 +80,74 @@ app = Flask(__name__)
 def health():
     return 'Bot is running'
 
-# Helper function to get user settings from Redis
+# Function to add a user to a chat in our tracking system
+def add_user_to_chat(user_id, chat_id):
+    user_id_str = str(user_id)
+    chat_id_str = str(chat_id)
+    
+    # Initialize chat in cache if not exists
+    if chat_id_str not in chat_members_cache:
+        chat_members_cache[chat_id_str] = set()
+    
+    # Add user to chat members set
+    chat_members_cache[chat_id_str].add(user_id_str)
+    
+    # Store in Redis for persistence
+    try:
+        redis_client.sadd(f"chat:{chat_id_str}:members", user_id_str)
+        logger.info(f"Added User{user_id} to Chat{chat_id} members")
+    except Exception as e:
+        logger.error(f"Error adding user to chat in Redis: {e}")
+
+# Function to get all members of a chat
+def get_chat_members(chat_id):
+    chat_id_str = str(chat_id)
+    
+    # Use cached members if available
+    if chat_id_str in chat_members_cache:
+        return chat_members_cache[chat_id_str]
+    
+    # Otherwise get from Redis
+    try:
+        members = redis_client.smembers(f"chat:{chat_id_str}:members")
+        # Convert bytes to strings and store in cache
+        member_strings = set(m.decode('utf-8') for m in members)
+        chat_members_cache[chat_id_str] = member_strings
+        return member_strings
+    except Exception as e:
+        logger.error(f"Error getting chat members from Redis: {e}")
+        return set()
+
+# Function to reset cache when needed
+def reset_cache():
+    global user_settings_cache, chat_members_cache, cache_last_updated
+    logger.info("Resetting cache")
+    user_settings_cache = {}
+    chat_members_cache = {}
+    cache_last_updated = 0
+
+# Function to check if cache is stale
+def is_cache_stale():
+    current_time = time.time()
+    return (current_time - cache_last_updated) > CACHE_TTL
+
+# Helper function to get user settings from Redis with caching
 def get_user_settings(user_id):
     user_id_str = str(user_id)
+    
+    # Check if settings are in cache and cache is not stale
+    if user_id_str in user_settings_cache and not is_cache_stale():
+        return user_settings_cache[user_id_str].copy()  # Return a copy to prevent accidental mutation
+    
+    # Not in cache or cache is stale, get from Redis
     settings_json = redis_client.get(f"user:{user_id_str}")
     
     if settings_json:
         try:
-            return json.loads(settings_json)
+            settings = json.loads(settings_json)
+            # Cache the settings
+            user_settings_cache[user_id_str] = settings.copy()
+            return settings
         except Exception as e:
             logger.error(f"Error parsing Redis data for user {user_id}: {e}")
     
@@ -90,18 +157,29 @@ def get_user_settings(user_id):
         "mode": "off"  # Default to off mode
     }
     
-    # Save default settings
+    # Save default settings to Redis and cache
     redis_client.set(f"user:{user_id_str}", json.dumps(default_settings))
+    user_settings_cache[user_id_str] = default_settings.copy()
     return default_settings
 
 # Helper function to update user settings in Redis
 def update_user_settings(user_id, key, value):
+    global cache_last_updated
+    
     user_id_str = str(user_id)
     settings = get_user_settings(user_id)
     settings[key] = value
     
     try:
+        # Update Redis
         redis_client.set(f"user:{user_id_str}", json.dumps(settings))
+        
+        # Update cache with a copy
+        user_settings_cache[user_id_str] = settings.copy()
+        
+        # Update cache timestamp
+        cache_last_updated = time.time()
+        
         logger.info(f"Updated settings for User{user_id}: {key}={value}")
     except Exception as e:
         logger.error(f"Error saving settings to Redis for user {user_id}: {e}")
@@ -271,6 +349,11 @@ def translate_text(text, target_language):
 
 # Command handler for /start
 def start(update: Update, context: CallbackContext) -> None:
+    # Register the user with the chat they're using
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    add_user_to_chat(user_id, chat_id)
+    
     update.message.reply_text(
         'Hello! I am Message Translate, your language learning assistant.\n\n'
         'Use /setlanguage [language] to set your learning language.\n'
@@ -332,8 +415,57 @@ def get_settings(update: Update, context: CallbackContext) -> None:
         f'Translation mode: {mode_description}'
     )
 
+# Function to refresh cache if stale
+def refresh_cache_if_needed():
+    global cache_last_updated
+    
+    # Only refresh if cache is stale
+    if is_cache_stale():
+        logger.info("Cache is stale, refreshing user settings and chat members")
+        # Instead of partial refresh, do a full reset when stale
+        reset_cache()
+        
+        # Use scan to find all chat member keys
+        cursor = '0'
+        chat_keys = []
+        
+        while cursor != 0:
+            cursor, keys = redis_client.scan(cursor=cursor, match="chat:*:members", count=100)
+            if keys:
+                chat_keys.extend(keys)
+            cursor = int(cursor)
+        
+        # Process each chat's members
+        for chat_key in chat_keys:
+            try:
+                # Extract chat_id from key format "chat:{chat_id}:members"
+                key_parts = chat_key.decode('utf-8').split(':')
+                if len(key_parts) >= 3:
+                    chat_id_str = key_parts[1]
+                    
+                    # Get members for this chat
+                    members = redis_client.smembers(f"chat:{chat_id_str}:members")
+                    member_strings = set(m.decode('utf-8') for m in members)
+                    chat_members_cache[chat_id_str] = member_strings
+                    
+                    # Load settings for each member
+                    for user_id_str in member_strings:
+                        settings_json = redis_client.get(f"user:{user_id_str}")
+                        if settings_json:
+                            settings = json.loads(settings_json)
+                            user_settings_cache[user_id_str] = settings.copy()  # Use copy to prevent accidental mutation
+            except Exception as e:
+                logger.error(f"Error refreshing cache for chat key {chat_key}: {e}")
+        
+        # Update timestamp
+        cache_last_updated = time.time()
+        logger.info(f"Cache refreshed, cached {len(chat_members_cache)} chats and {len(user_settings_cache)} users")
+
 # Message handler for processing group messages
 def process_message(update: Update, context: CallbackContext) -> None:
+    # Periodically refresh cache
+    refresh_cache_if_needed()
+    
     # Skip processing if not in a group
     if update.effective_chat.type not in ['group', 'supergroup']:
         logger.info(f"Skipping message - not in a group chat")
@@ -352,6 +484,9 @@ def process_message(update: Update, context: CallbackContext) -> None:
     message_id = message.message_id
     message_text = message.text or ''
     
+    # Register the sender with this chat if not already registered
+    add_user_to_chat(sender_id, chat_id)
+    
     # Log incoming message
     sender_username = update.effective_user.username or f"User{sender_id}"
     chat_title = update.effective_chat.title or f"Chat{chat_id}"
@@ -361,25 +496,26 @@ def process_message(update: Update, context: CallbackContext) -> None:
         logger.info("Skipping empty message")
         return
     
-    # Get all Redis keys for users
-    all_user_keys = redis_client.keys("user:*")
+    # Get members of this chat
+    chat_members = get_chat_members(chat_id)
     
-    # Process message for each user in the group
+    # Process message for each user in the chat
     users_count = 0
     translation_count = 0
     
-    for user_key in all_user_keys:
-        user_id_str = user_key.decode('utf-8').split(':')[1]
+    for user_id_str in chat_members:
         user_id = int(user_id_str)
         users_count += 1
         
-        settings = get_user_settings(user_id)
-        
-        # Skip if this is the sender or if language is not set or mode is off
+        # Skip if this is the sender
         if user_id == sender_id:
             logger.info(f"Skipping User{user_id} - message sender")
             continue
-            
+        
+        # Get user settings
+        settings = get_user_settings(user_id)
+        
+        # Skip if language is not set or mode is off
         if not settings['language']:
             logger.info(f"Skipping User{user_id} - no language set")
             continue
@@ -426,6 +562,14 @@ def main():
     try:
         redis_client.ping()
         logger.info("Redis connection successful. User settings will be persistent.")
+        
+        # Initialize cache at startup
+        logger.info("Initializing cache...")
+        try:
+            refresh_cache_if_needed()
+            logger.info(f"Cache initialized with {len(user_settings_cache)} users")
+        except Exception as e:
+            logger.error(f"Error initializing cache: {e}")
     except Exception as e:
         logger.error(f"!!! WARNING: Redis connection failed: {e}. User settings will not be persistent !!!")
     
