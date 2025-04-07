@@ -7,6 +7,7 @@ from openai import OpenAI
 from telegram import Update, ParseMode
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 from flask import Flask
+import redis
 
 # Load environment variables
 load_dotenv()
@@ -21,6 +22,10 @@ logger = logging.getLogger(__name__)
 # Get API keys from environment
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
+REDIS_URL = os.getenv('REDIS_URL')
+
+# Initialize Redis client
+redis_client = redis.from_url(REDIS_URL, ssl=True)
 
 # Initialize Google client (using OpenAI client)
 client = OpenAI(
@@ -47,9 +52,6 @@ def test_google_api():
         logger.error(f"Google API test failed: {e}")
         return False
 
-# User settings storage
-USER_SETTINGS_FILE = 'user_settings.json'
-
 # Valid modes
 VALID_MODES = ['overlay', 'off']
 
@@ -60,49 +62,38 @@ app = Flask(__name__)
 def health():
     return 'Bot is running'
 
-# Helper function to load user settings
-def load_user_settings():
-    try:
-        if os.path.exists(USER_SETTINGS_FILE):
-            with open(USER_SETTINGS_FILE, 'r') as f:
-                return json.load(f)
-        return {}
-    except Exception as e:
-        logger.error(f"Error loading user settings: {e}")
-        return {}
-
-# Helper function to save user settings
-def save_user_settings(settings):
-    try:
-        with open(USER_SETTINGS_FILE, 'w') as f:
-            json.dump(settings, f, indent=2)
-    except Exception as e:
-        logger.error(f"Error saving user settings: {e}")
-
-# Initialize user settings
-user_settings = load_user_settings()
-
-# Helper function to get user settings
+# Helper function to get user settings from Redis
 def get_user_settings(user_id):
     user_id_str = str(user_id)
-    if user_id_str not in user_settings:
-        user_settings[user_id_str] = {
-            "language": None,
-            "mode": "off"  # Default to off mode
-        }
-        save_user_settings(user_settings)
-    return user_settings[user_id_str]
+    settings_json = redis_client.get(f"user:{user_id_str}")
+    
+    if settings_json:
+        try:
+            return json.loads(settings_json)
+        except Exception as e:
+            logger.error(f"Error parsing Redis data for user {user_id}: {e}")
+    
+    # Default settings if not found
+    default_settings = {
+        "language": None,
+        "mode": "off"  # Default to off mode
+    }
+    
+    # Save default settings
+    redis_client.set(f"user:{user_id_str}", json.dumps(default_settings))
+    return default_settings
 
-# Helper function to update user settings
+# Helper function to update user settings in Redis
 def update_user_settings(user_id, key, value):
     user_id_str = str(user_id)
-    if user_id_str not in user_settings:
-        user_settings[user_id_str] = {
-            "language": None,
-            "mode": "off"
-        }
-    user_settings[user_id_str][key] = value
-    save_user_settings(user_settings)
+    settings = get_user_settings(user_id)
+    settings[key] = value
+    
+    try:
+        redis_client.set(f"user:{user_id_str}", json.dumps(settings))
+        logger.info(f"Updated settings for User{user_id}: {key}={value}")
+    except Exception as e:
+        logger.error(f"Error saving settings to Redis for user {user_id}: {e}")
 
 # Function to translate text using Google Gemini API
 def translate_text(text, target_language):
@@ -360,16 +351,19 @@ def process_message(update: Update, context: CallbackContext) -> None:
         logger.info("Skipping empty message")
         return
     
-    # Debug: Log all current user settings
-    logger.info(f"Current user settings: {user_settings}")
+    # Get all Redis keys for users
+    all_user_keys = redis_client.keys("user:*")
     
     # Process message for each user in the group
     users_count = 0
     translation_count = 0
     
-    for user_id_str, settings in user_settings.items():
+    for user_key in all_user_keys:
+        user_id_str = user_key.decode('utf-8').split(':')[1]
         user_id = int(user_id_str)
         users_count += 1
+        
+        settings = get_user_settings(user_id)
         
         # Skip if this is the sender or if language is not set or mode is off
         if user_id == sender_id:
@@ -420,6 +414,13 @@ def main():
         logger.error("!!! WARNING: Google API connection failed. Translations will not work !!!")
     else:
         logger.info("Google API connection successful. Translations should work correctly.")
+    
+    # Test Redis connectivity
+    try:
+        redis_client.ping()
+        logger.info("Redis connection successful. User settings will be persistent.")
+    except Exception as e:
+        logger.error(f"!!! WARNING: Redis connection failed: {e}. User settings will not be persistent !!!")
     
     # Create the Updater
     updater = Updater(TELEGRAM_TOKEN)

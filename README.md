@@ -29,6 +29,7 @@ LangBot is a Telegram bot that helps users learn new languages by providing phon
      TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
      GOOGLE_API_KEY=your_google_api_key_here
      PORT=8080  # Required for Render deployment
+     REDIS_URL=your_redis_url_here  # For persistent storage
      ```
 
 4. **Run the Bot Locally**
@@ -113,14 +114,33 @@ LangBot uses Google's Gemini API to:
 
 ## Data Storage
 
-User settings are stored in a local JSON file (`user_settings.json`). Each user's settings include:
+User settings are stored in Redis, a fast, in-memory data store that provides persistent storage across application restarts. Each user's settings include:
 - Target language for learning
 - Preferred display mode for translations (overlay or off)
 
-### Note on Persistent Storage with Render
-When deploying to Render, be aware that the filesystem is ephemeral. For persistent storage options:
-1. Use Render's persistent disk feature
-2. Consider migrating to a database solution
+The bot uses the Redis key format `user:{user_id}` to store JSON-serialized user settings.
+
+### Redis Configuration
+
+The bot requires a Redis server for persistent storage. You can use:
+1. **Upstash** (recommended for Render deployment): A serverless Redis service with a free tier
+2. **Redis Cloud**: Another managed Redis service
+3. **Self-hosted Redis**: For local development or your own server
+
+To configure Redis:
+1. Create a Redis instance (e.g., on Upstash.com)
+2. Add your Redis URL to the `.env` file:
+   ```
+   REDIS_URL=redis://default:password@hostname:port
+   ```
+3. For TLS connections (like Upstash), the bot automatically enables SSL
+
+### Storage Considerations
+Redis provides several advantages over the previous file-based storage:
+1. **True Persistence**: User settings persist across application restarts
+2. **Atomic Operations**: Reduces the risk of data corruption
+3. **Performance**: In-memory storage is significantly faster than file operations
+4. **Scalability**: Works well for large numbers of users
 
 ## Security Note
 
