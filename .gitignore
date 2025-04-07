@@ -1,7 +1,46 @@
-# Byte-compiled / optimized / DLL files
+# Environment variables
+.env
+
+# User data
+user_settings.json
+
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Logs
+*.log
+
+# OS specific
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Byte-compiled / optimized / DLL files
+*.manifest
+*.spec
 
 # C extensions
 *.so
@@ -172,6 +211,3 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
-
-
-user_settings.json

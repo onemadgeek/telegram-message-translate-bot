@@ -1,6 +1,8 @@
 import os
 import json
 import logging
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from dotenv import load_dotenv
 from openai import OpenAI
 from telegram import Update, ParseMode
@@ -359,6 +361,22 @@ def process_message(update: Update, context: CallbackContext) -> None:
 def error_handler(update: Update, context: CallbackContext) -> None:
     logger.error(f"Update {update} caused error {context.error}")
 
+# Simple HTTP server for health checks
+class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b'Bot is running')
+
+def run_http_server():
+    # Get port from environment variable (provided by Render)
+    port = int(os.getenv('PORT', 8080))
+    server_address = ('', port)
+    httpd = HTTPServer(server_address, SimpleHTTPRequestHandler)
+    logger.info(f'Starting HTTP server on port {port}')
+    httpd.serve_forever()
+
 def main() -> None:
     # Create the Updater
     updater = Updater(TELEGRAM_TOKEN)
@@ -378,8 +396,13 @@ def main() -> None:
     # Add error handler
     dispatcher.add_error_handler(error_handler)
     
+    # Start the HTTP server in a separate thread
+    http_thread = threading.Thread(target=run_http_server, daemon=True)
+    http_thread.start()
+    
     # Start the Bot
     updater.start_polling()
+    logger.info('Bot started polling')
     updater.idle()
 
 if __name__ == '__main__':
