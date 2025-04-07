@@ -38,7 +38,14 @@ LangBot is a Telegram bot that helps users learn new languages by providing phon
 
 5. **Add to Group Chat**
    - Add your bot to a group chat
+   - **Important**: Make the bot an admin in the group
    - Ensure the bot has permission to read messages and send replies
+
+6. **Configure Bot Privacy Settings**
+   - Send `/mybots` to BotFather
+   - Select your bot
+   - Go to "Bot Settings" > "Group Privacy"
+   - Set it to DISABLED (this allows the bot to see all messages in groups)
 
 ## Deployment on Render
 
@@ -81,6 +88,17 @@ Only one instance of your bot can poll for updates from the Telegram API at a ti
 3. Choose your display mode with `/setmode [mode]` (e.g., `/setmode overlay`)
 4. Check your current settings with `/getsettings`
 5. The bot will automatically translate messages in the group chat according to your settings and display them with English phonetic transliterations
+
+## Troubleshooting
+
+If translations aren't working in your group:
+
+1. **Verify Bot Admin Status**: The bot must be an admin in your group to see all messages
+2. **Check Privacy Mode**: Make sure you've disabled privacy mode with BotFather
+3. **User Settings**: Ensure at least one user (not the message sender) has:
+   - Set a language using `/setlanguage`
+   - Set mode to `overlay` using `/setmode overlay`
+4. **Send Test Messages**: Have someone else (not you) send messages while you have translation mode on
 
 ## Supported Languages
 

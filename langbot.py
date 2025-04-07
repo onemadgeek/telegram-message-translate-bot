@@ -2,12 +2,11 @@ import os
 import json
 import logging
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
 from dotenv import load_dotenv
 from openai import OpenAI
 from telegram import Update, ParseMode
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
-from flask import Flask, request
+from flask import Flask
 
 # Load environment variables
 load_dotenv()
@@ -105,34 +104,6 @@ def update_user_settings(user_id, key, value):
     user_settings[user_id_str][key] = value
     save_user_settings(user_settings)
 
-# Function to extract key phrases from a message
-def extract_key_phrases(text, max_phrases=5):
-    # For short messages, just return the whole text
-    if len(text.split()) <= max_phrases:
-        return [{'original': text, 'start_pos': 0, 'length': len(text)}]
-    
-    # Split text into words
-    words = text.split()
-    
-    # Create a list of candidate words
-    candidates = []
-    
-    # Process individual words
-    for word in words:
-        clean_word = word.strip('.,!?;:()"\'')
-        if len(clean_word) > 1:  # Include most words, even common ones
-            candidates.append({
-                'original': word,
-                'start_pos': text.find(word),
-                'length': len(word)
-            })
-    
-    # Return a random sample of words to make translations varied
-    import random
-    if len(candidates) > max_phrases:
-        return random.sample(candidates, max_phrases)
-    return candidates
-
 # Function to translate text using Google Gemini API
 def translate_text(text, target_language):
     try:
@@ -206,11 +177,22 @@ def translate_text(text, target_language):
             "Your response: Ah-ree-gah-toh\n\n"
 
             # --- End Examples ---
-            "IMPORTANT: Always follow the two steps: 1. Translate to the target language. 2. Provide ONLY the English letter phonetic transliteration of that translation.\n"
-            "Strictly adhere to the output format constraints: only the English letter transliteration of the translation, no native script, no explanations, no quotes."
+            "CRITICAL INSTRUCTIONS:\n"
+            "1. NEVER output both original response AND broken down pronunciation\n"
+            "2. NEVER output syllable-by-syllable breakdowns with hyphens\n"
+            "3. NEVER provide explanations or translations in your output\n"
+            "4. ALWAYS provide ONLY the Romanized transliteration in plain text\n"
+            "5. For languages that use non-Latin scripts, provide ONLY the Romanized version\n"
+            "6. Do NOT return multiple lines or versions\n\n"
+            
+            "Format your response STRICTLY as follows:\n"
+            "- ONLY the English phonetic transliteration\n"
+            "- NO introductions, translations, explanations, or native script\n"
+            "- NO syllable breakdowns unless they are natural in the target language\n"
+            "- DO NOT include any text like 'Translation:' or 'Romanized:'"
         )
         user_prompt = (
-            f"Translate the following English text into {target_language} and provide ONLY the phonetic transliteration as shown in the examples:\n"
+            f"Translate the following English text into {target_language} and provide ONLY the phonetic transliteration following the strict format rules in my instructions:\n"
             f"\"{text}\""
         )
         
@@ -254,11 +236,26 @@ def translate_text(text, target_language):
         
         logger.info(f"Translation result: '{text}' → '{result}'")
         
-        # Clean up the result if needed
+        # Enhanced clean up of the result
         # Remove any quotes, headings, etc.
         result = re.sub(r'^["\']*|["\']*$', '', result)  # Remove quotes at beginning/end
-        result = re.sub(r'^Translation:|^Pronunciation:|^Transliteration:|^In English:', '', result, flags=re.IGNORECASE).strip()  # Remove common prefixes
+        result = re.sub(r'^Translation:|^Pronunciation:|^Transliteration:|^In English:|^Phonetic:|^Romanized:', '', result, flags=re.IGNORECASE).strip()  # Remove common prefixes
         result = re.sub(r'[\u0900-\u097F\u0980-\u09FF\u0A00-\u0A7F\u0A80-\u0AFF\u0B00-\u0B7F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F]', '', result)  # Remove any native script characters
+        
+        # Remove anything that looks like a syllable breakdown that appears after the main transliteration
+        # This specifically targets the pattern seen where transliteration is followed by syllable breakdown
+        if '\n' in result:
+            result = result.split('\n')[0].strip()
+        
+        # Remove syllable-by-syllable breakdowns if they appear in a pattern like "word (syl-la-ble)" or "word. syl-la-ble"
+        result = re.sub(r'\s*\([^)]*-[^)]*\)', '', result)  # Remove (syl-la-ble)
+        result = re.sub(r'\.\s+[A-Za-z-]+(?:-[A-Za-z-]+)+', '.', result)  # Remove period followed by hyphenated breakdown
+        
+        # If we have multiple sentences, and the second has hyphens (likely a breakdown), keep only the first
+        sentences = result.split('.')
+        if len(sentences) > 1:
+            if '-' in '.'.join(sentences[1:]):
+                result = sentences[0].strip() + '.'
         
         # Log the cleaned result
         if result != response.choices[0].message.content.strip():
@@ -279,7 +276,8 @@ def start(update: Update, context: CallbackContext) -> None:
         'Use /setmode [overlay|off] to set how you want to see translations.\n'
         '  - overlay: see translations in the chat\n'
         '  - off: disable translations (default)\n\n'
-        'Use /getsettings to view your current settings.'
+        'Use /getsettings to view your current settings.\n\n'
+        '⚠️ Important: Make sure the bot is an ADMIN in your group and disable privacy mode with BotFather for full functionality.'
     )
 
 # Command handler for /setlanguage
@@ -342,6 +340,12 @@ def process_message(update: Update, context: CallbackContext) -> None:
         
     # Get message info
     message = update.message
+    
+    # Skip if message is None (can happen in some updates)
+    if message is None:
+        logger.info("Skipping - message is None")
+        return
+        
     sender_id = update.effective_user.id
     chat_id = update.effective_chat.id
     message_id = message.message_id
