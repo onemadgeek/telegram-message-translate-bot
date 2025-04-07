@@ -8,6 +8,7 @@ from telegram import Update, ParseMode
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 from flask import Flask
 import redis
+import urllib.parse
 
 # Load environment variables
 load_dotenv()
@@ -25,7 +26,18 @@ GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 REDIS_URL = os.getenv('REDIS_URL')
 
 # Initialize Redis client
-redis_client = redis.from_url(REDIS_URL)
+parsed_redis_url = urllib.parse.urlparse(REDIS_URL)
+redis_host = parsed_redis_url.hostname
+redis_port = parsed_redis_url.port or 6379
+redis_password = parsed_redis_url.password
+redis_username = parsed_redis_url.username
+redis_client = redis.Redis(
+    host=redis_host,
+    port=redis_port,
+    username=redis_username,
+    password=redis_password,
+    ssl=True,
+)
 
 # Initialize Google client (using OpenAI client)
 client = OpenAI(
