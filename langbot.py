@@ -390,24 +390,29 @@ def main() -> None:
     
     # Determine if running on Render
     is_render = os.getenv('RENDER') == 'true'
-    port = int(os.getenv('PORT', 8080))
+    
+    # Use PORT environment variable for Flask health check server
+    flask_port = int(os.getenv('PORT', 8080))
     
     # Start Flask server in a separate thread for health checks
     def run_flask():
-        app.run(host='0.0.0.0', port=port)
+        app.run(host='0.0.0.0', port=flask_port)
     
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
-    logger.info(f"Health check server started on port {port}")
+    logger.info(f"Health check server started on port {flask_port}")
     
     if is_render:
         # Use webhook mode for Render deployment
         render_external_url = os.getenv('RENDER_EXTERNAL_URL')
         if render_external_url:
+            # Use a different port for Telegram webhook
+            webhook_port = 8443  # Default port for Telegram webhooks
+            
             # Set webhook using Render's external URL
             updater.start_webhook(
                 listen="0.0.0.0",
-                port=int(os.getenv('TELEGRAM_WEBHOOK_PORT', 8443)),
+                port=webhook_port,
                 url_path=TELEGRAM_TOKEN,
                 webhook_url=f"{render_external_url}/{TELEGRAM_TOKEN}"
             )
