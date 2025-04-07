@@ -318,6 +318,7 @@ def get_settings(update: Update, context: CallbackContext) -> None:
 def process_message(update: Update, context: CallbackContext) -> None:
     # Skip processing if not in a group
     if update.effective_chat.type not in ['group', 'supergroup']:
+        logger.info(f"Skipping message - not in a group chat")
         return
         
     # Get message info
@@ -336,35 +337,55 @@ def process_message(update: Update, context: CallbackContext) -> None:
         logger.info("Skipping empty message")
         return
     
+    # Debug: Log all current user settings
+    logger.info(f"Current user settings: {user_settings}")
+    
     # Process message for each user in the group
+    users_count = 0
+    translation_count = 0
+    
     for user_id_str, settings in user_settings.items():
         user_id = int(user_id_str)
+        users_count += 1
         
         # Skip if this is the sender or if language is not set or mode is off
-        if user_id == sender_id or not settings['language'] or settings['mode'] == 'off':
+        if user_id == sender_id:
+            logger.info(f"Skipping User{user_id} - message sender")
+            continue
+            
+        if not settings['language']:
+            logger.info(f"Skipping User{user_id} - no language set")
+            continue
+            
+        if settings['mode'] == 'off':
+            logger.info(f"Skipping User{user_id} - mode is off")
             continue
         
         logger.info(f"Processing for User{user_id} learning {settings['language']}")
         
         # Translate the entire message
-        translated = translate_text(message_text, settings['language'])
-        
-        if translated != message_text and translated.strip() != '':
-            logger.info(f"Translation successful: '{message_text}' → '{translated}'")
+        try:
+            translated = translate_text(message_text, settings['language'])
             
-            formatted_message = f"{translated}"
-            
-            logger.info(f"Sending overlay translation to chat")
-            context.bot.send_message(
-                chat_id=chat_id,
-                text=formatted_message,
-                parse_mode=ParseMode.HTML,
-                reply_to_message_id=message_id
-            )
-        else:
-            logger.info(f"No useful translation generated or translation matches original")
+            if translated != message_text and translated.strip() != '':
+                logger.info(f"Translation successful: '{message_text}' → '{translated}'")
+                
+                formatted_message = f"{translated}"
+                
+                logger.info(f"Sending overlay translation to chat")
+                context.bot.send_message(
+                    chat_id=chat_id,
+                    text=formatted_message,
+                    parse_mode=ParseMode.HTML,
+                    reply_to_message_id=message_id
+                )
+                translation_count += 1
+            else:
+                logger.info(f"No useful translation generated or translation matches original")
+        except Exception as e:
+            logger.error(f"Error during translation or sending: {e}")
     
-    logger.info(f"Finished processing message {message_id}")
+    logger.info(f"Finished processing message {message_id} - Processed {users_count} users, sent {translation_count} translations")
 
 def error_handler(update: Update, context: CallbackContext) -> None:
     logger.error(f"Update {update} caused error {context.error}")
@@ -391,40 +412,52 @@ def main() -> None:
     # Determine if running on Render
     is_render = os.getenv('RENDER') == 'true'
     
-    # Use PORT environment variable for Flask health check server
-    flask_port = int(os.getenv('PORT', 8080))
+    # Use PORT environment variable for both Flask and webhook
+    port = int(os.getenv('PORT', 8080))
     
     # Start Flask server in a separate thread for health checks
     def run_flask():
-        app.run(host='0.0.0.0', port=flask_port)
-    
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    logger.info(f"Health check server started on port {flask_port}")
+        app.run(host='0.0.0.0', port=port)
     
     if is_render:
         # Use webhook mode for Render deployment
         render_external_url = os.getenv('RENDER_EXTERNAL_URL')
         if render_external_url:
-            # Use a different port for Telegram webhook
-            webhook_port = 8443  # Default port for Telegram webhooks
-            
             # Set webhook using Render's external URL
             updater.start_webhook(
                 listen="0.0.0.0",
-                port=webhook_port,
+                port=port,
                 url_path=TELEGRAM_TOKEN,
                 webhook_url=f"{render_external_url}/{TELEGRAM_TOKEN}"
             )
             logger.info(f"Bot started in webhook mode with URL: {render_external_url}/{TELEGRAM_TOKEN}")
+            
+            # Only start Flask after webhook is set up
+            flask_thread = threading.Thread(target=run_flask, daemon=True)
+            flask_thread.start()
+            logger.info(f"Health check server started on port {port}")
         else:
             # Fallback to polling mode if no external URL
             updater.start_polling()
             logger.info(f"Bot started in polling mode (fallback)")
+            
+            # Start Flask for health checks
+            flask_thread = threading.Thread(target=run_flask, daemon=True)
+            flask_thread.start()
+            logger.info(f"Health check server started on port {port}")
     else:
         # Local development - use polling
         updater.start_polling()
         logger.info('Bot started in polling mode (local development)')
+        
+        # Start Flask on a different port for local development
+        dev_port = 5000
+        def run_flask_dev():
+            app.run(host='0.0.0.0', port=dev_port)
+        
+        flask_thread = threading.Thread(target=run_flask_dev, daemon=True)
+        flask_thread.start()
+        logger.info(f"Health check server started on port {dev_port} (local development)")
     
     # Run the bot until you press Ctrl-C
     updater.idle()
