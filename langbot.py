@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from telegram import Update, ParseMode
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+from flask import Flask, request
 
 # Load environment variables
 load_dotenv()
@@ -33,6 +34,13 @@ USER_SETTINGS_FILE = 'user_settings.json'
 
 # Valid modes
 VALID_MODES = ['overlay', 'off']
+
+# Initialize Flask app for health checks
+app = Flask(__name__)
+
+@app.route('/')
+def health():
+    return 'Bot is running'
 
 # Helper function to load user settings
 def load_user_settings():
@@ -247,7 +255,7 @@ def translate_text(text, target_language):
 # Command handler for /start
 def start(update: Update, context: CallbackContext) -> None:
     update.message.reply_text(
-        'Hello! I am LangBot, your language learning assistant.\n\n'
+        'Hello! I am Message Translate, your language learning assistant.\n\n'
         'Use /setlanguage [language] to set your learning language.\n'
         'Use /setmode [overlay|off] to set how you want to see translations.\n'
         '  - overlay: see translations in the chat\n'
@@ -361,22 +369,6 @@ def process_message(update: Update, context: CallbackContext) -> None:
 def error_handler(update: Update, context: CallbackContext) -> None:
     logger.error(f"Update {update} caused error {context.error}")
 
-# Simple HTTP server for health checks
-class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/plain')
-        self.end_headers()
-        self.wfile.write(b'Bot is running')
-
-def run_http_server():
-    # Get port from environment variable (provided by Render)
-    port = int(os.getenv('PORT', 8080))
-    server_address = ('', port)
-    httpd = HTTPServer(server_address, SimpleHTTPRequestHandler)
-    logger.info(f'Starting HTTP server on port {port}')
-    httpd.serve_forever()
-
 def main() -> None:
     # Create the Updater
     updater = Updater(TELEGRAM_TOKEN)
@@ -384,7 +376,7 @@ def main() -> None:
     # Get the dispatcher
     dispatcher = updater.dispatcher
     
-    # Add command handlers
+    # Add command handlers with allowance for username suffix
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(CommandHandler("setlanguage", set_language))
     dispatcher.add_handler(CommandHandler("setmode", set_mode))
@@ -396,13 +388,40 @@ def main() -> None:
     # Add error handler
     dispatcher.add_error_handler(error_handler)
     
-    # Start the HTTP server in a separate thread
-    http_thread = threading.Thread(target=run_http_server, daemon=True)
-    http_thread.start()
+    # Determine if running on Render
+    is_render = os.getenv('RENDER') == 'true'
+    port = int(os.getenv('PORT', 8080))
     
-    # Start the Bot
-    updater.start_polling()
-    logger.info('Bot started polling')
+    # Start Flask server in a separate thread for health checks
+    def run_flask():
+        app.run(host='0.0.0.0', port=port)
+    
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    logger.info(f"Health check server started on port {port}")
+    
+    if is_render:
+        # Use webhook mode for Render deployment
+        render_external_url = os.getenv('RENDER_EXTERNAL_URL')
+        if render_external_url:
+            # Set webhook using Render's external URL
+            updater.start_webhook(
+                listen="0.0.0.0",
+                port=int(os.getenv('TELEGRAM_WEBHOOK_PORT', 8443)),
+                url_path=TELEGRAM_TOKEN,
+                webhook_url=f"{render_external_url}/{TELEGRAM_TOKEN}"
+            )
+            logger.info(f"Bot started in webhook mode with URL: {render_external_url}/{TELEGRAM_TOKEN}")
+        else:
+            # Fallback to polling mode if no external URL
+            updater.start_polling()
+            logger.info(f"Bot started in polling mode (fallback)")
+    else:
+        # Local development - use polling
+        updater.start_polling()
+        logger.info('Bot started in polling mode (local development)')
+    
+    # Run the bot until you press Ctrl-C
     updater.idle()
 
 if __name__ == '__main__':

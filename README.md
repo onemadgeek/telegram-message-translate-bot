@@ -56,15 +56,23 @@ LangBot is a Telegram bot that helps users learn new languages by providing phon
      - **Build Command:** `pip install -r requirements.txt`
      - **Start Command:** `python langbot.py`
      - **Environment Variables:** Add your `TELEGRAM_BOT_TOKEN` and `GOOGLE_API_KEY`
-     - Render will automatically provide the `PORT` environment variable
+     - Render will automatically provide the `PORT` and `RENDER_EXTERNAL_URL` environment variables
 
 4. **Deploy**
    - Click "Create Web Service"
    - Render will build and deploy your bot
 
-5. **Verify Deployment**
-   - The HTTP server built into the bot will respond on the assigned port
-   - Your bot should now be operational on Telegram
+5. **Webhook Configuration**
+   - The bot will automatically set up a webhook using the Render external URL
+   - No additional configuration is needed as the bot detects if it's running on Render
+
+## Important Note on Multiple Instances
+
+Only one instance of your bot can poll for updates from the Telegram API at a time. If you deploy multiple instances, or run both locally and on Render, you'll get the "terminated by other getUpdates request" error. To solve this:
+
+1. Stop any locally running instances when deploying to Render
+2. If you need multiple instances, use webhook mode (the default on Render)
+3. If you have multiple Render instances, pause or delete all but one
 
 ## Usage
 
