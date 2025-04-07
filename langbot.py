@@ -29,6 +29,25 @@ client = OpenAI(
     base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
 )
 
+# Test Google API connectivity
+def test_google_api():
+    try:
+        logger.info("Testing Google Gemini API connectivity...")
+        response = client.chat.completions.create(
+            model="gemini-2.0-flash",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": "Say 'API connection successful' in one short sentence."}
+            ],
+            max_tokens=20
+        )
+        result = response.choices[0].message.content.strip()
+        logger.info(f"Google API test result: {result}")
+        return True
+    except Exception as e:
+        logger.error(f"Google API test failed: {e}")
+        return False
+
 # User settings storage
 USER_SETTINGS_FILE = 'user_settings.json'
 
@@ -392,6 +411,12 @@ def error_handler(update: Update, context: CallbackContext) -> None:
 
 def main() -> None:
     # Create the Updater
+    # Test Google API connectivity at startup
+    api_working = test_google_api()
+    if not api_working:
+        logger.error("!!! WARNING: Google API connection failed. Translations will not work !!!")
+    else:
+        logger.info("Google API connection successful. Translations should work correctly.")
     updater = Updater(TELEGRAM_TOKEN)
     
     # Get the dispatcher
