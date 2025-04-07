@@ -409,14 +409,15 @@ def process_message(update: Update, context: CallbackContext) -> None:
 def error_handler(update: Update, context: CallbackContext) -> None:
     logger.error(f"Update {update} caused error {context.error}")
 
-def main() -> None:
-    # Create the Updater
+def main():
     # Test Google API connectivity at startup
     api_working = test_google_api()
     if not api_working:
         logger.error("!!! WARNING: Google API connection failed. Translations will not work !!!")
     else:
         logger.info("Google API connection successful. Translations should work correctly.")
+    
+    # Create the Updater
     updater = Updater(TELEGRAM_TOKEN)
     
     # Get the dispatcher
@@ -434,58 +435,26 @@ def main() -> None:
     # Add error handler
     dispatcher.add_error_handler(error_handler)
     
-    # Determine if running on Render
+    # Check if running on Render
     is_render = os.getenv('RENDER') == 'true'
-    
-    # Use PORT environment variable for both Flask and webhook
-    port = int(os.getenv('PORT', 8080))
-    
-    # Start Flask server in a separate thread for health checks
-    def run_flask():
-        app.run(host='0.0.0.0', port=port)
+    render_port = int(os.getenv('PORT', 10000))
     
     if is_render:
-        # Use webhook mode for Render deployment
-        render_external_url = os.getenv('RENDER_EXTERNAL_URL')
-        if render_external_url:
-            # Set webhook using Render's external URL
-            updater.start_webhook(
-                listen="0.0.0.0",
-                port=port,
-                url_path=TELEGRAM_TOKEN,
-                webhook_url=f"{render_external_url}/{TELEGRAM_TOKEN}"
-            )
-            logger.info(f"Bot started in webhook mode with URL: {render_external_url}/{TELEGRAM_TOKEN}")
-            
-            # Only start Flask after webhook is set up
-            flask_thread = threading.Thread(target=run_flask, daemon=True)
-            flask_thread.start()
-            logger.info(f"Health check server started on port {port}")
-        else:
-            # Fallback to polling mode if no external URL
-            updater.start_polling()
-            logger.info(f"Bot started in polling mode (fallback)")
-            
-            # Start Flask for health checks
-            flask_thread = threading.Thread(target=run_flask, daemon=True)
-            flask_thread.start()
-            logger.info(f"Health check server started on port {port}")
-    else:
-        # Local development - use polling
+        # For Render: We need to work with their port requirements
+        # Start the updater in polling mode, not webhook
         updater.start_polling()
-        logger.info('Bot started in polling mode (local development)')
+        logger.info("Bot started in polling mode on Render")
         
-        # Start Flask on a different port for local development
-        dev_port = 5000
-        def run_flask_dev():
-            app.run(host='0.0.0.0', port=dev_port)
+        # Run the Flask app in the main thread to satisfy Render's health checks
+        logger.info(f"Starting health check server on port {render_port}")
+        app.run(host='0.0.0.0', port=render_port)
+    else:
+        # Local development
+        updater.start_polling()
+        logger.info("Bot started in polling mode (local development)")
         
-        flask_thread = threading.Thread(target=run_flask_dev, daemon=True)
-        flask_thread.start()
-        logger.info(f"Health check server started on port {dev_port} (local development)")
-    
-    # Run the bot until you press Ctrl-C
-    updater.idle()
+        # Run the bot until Ctrl-C
+        updater.idle()
 
 if __name__ == '__main__':
     main() 
