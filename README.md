@@ -2,6 +2,22 @@
 
 LangBot is a Telegram bot that helps users learn new languages by providing phonetic translations in group chats. Each user can set their own target language and choose whether to see translations.
 
+## Try the Bot Now!
+
+A live version of this bot is already hosted and ready to use! Just add [@msg_langbot](https://t.me/msg_langbot) to your group chat or send a direct message to get started.
+
+The hosted bot offers all features described in this README and is maintained for reliable, 24/7 operation. No setup required - just add it to your group!
+
+### Quick Start Guide
+
+1. Add [@msg_langbot](https://t.me/msg_langbot) to your group chat
+2. Make the bot an admin in your group
+3. Message the bot directly with `/start` to see available commands
+4. Set your learning language: `/setlanguage Spanish` (or any language)
+5. Turn on translations: `/setmode overlay`
+6. Check your settings: `/getsettings`
+7. Return to your group and watch as messages get translated with phonetic guides!
+
 ## Features
 
 - **Set Learning Language**: Choose the language you want to learn using `/setlanguage [language]`
