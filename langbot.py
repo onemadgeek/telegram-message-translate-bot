@@ -445,21 +445,17 @@ def main():
     render_port = int(os.getenv('PORT', 10000))
     
     if is_render:
-        # For Render: Use a separate thread for the health check server
-        logger.info(f"Starting health check server on port {render_port}")
-        flask_thread = threading.Thread(target=lambda: app.run(host='0.0.0.0', port=render_port))
-        flask_thread.daemon = True
-        flask_thread.start()
-        
-        # Start the updater in polling mode
+        # For Render: We need to work with their port requirements
+        # Start the updater in polling mode, not webhook
+        updater.start_polling()
         logger.info("Bot started in polling mode on Render")
-        updater.start_polling(clean=True, drop_pending_updates=True)
         
-        # Run the bot until program is terminated
-        updater.idle()
+        # Run the Flask app in the main thread to satisfy Render's health checks
+        logger.info(f"Starting health check server on port {render_port}")
+        app.run(host='0.0.0.0', port=render_port)
     else:
         # Local development
-        updater.start_polling(clean=True, drop_pending_updates=True)
+        updater.start_polling()
         logger.info("Bot started in polling mode (local development)")
         
         # Run the bot until Ctrl-C
