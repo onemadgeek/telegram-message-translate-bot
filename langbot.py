@@ -1,10 +1,9 @@
 import os
 import json
 import logging
-import threading
 from dotenv import load_dotenv
 from openai import OpenAI
-from telegram import Update, ParseMode
+from telegram import Update
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 from flask import Flask
 import redis
@@ -200,8 +199,7 @@ def translate_text(text, target_language):
         )
         
         # Log the complete prompt
-        logger.info(f"PROMPT - System: {system_prompt}")
-        logger.info(f"PROMPT - User: {user_prompt}")
+        logger.info("Sending translation request to Google Gemini API")
         
         # Log completion parameters
         completion_params = {
@@ -399,13 +397,10 @@ def process_message(update: Update, context: CallbackContext) -> None:
             if translated != message_text and translated.strip() != '':
                 logger.info(f"Translation successful: '{message_text}' → '{translated}'")
                 
-                formatted_message = f"{translated}"
-                
                 logger.info(f"Sending overlay translation to chat")
                 context.bot.send_message(
                     chat_id=chat_id,
-                    text=formatted_message,
-                    parse_mode=ParseMode.HTML,
+                    text=translated,
                     reply_to_message_id=message_id
                 )
                 translation_count += 1
@@ -454,7 +449,7 @@ def main():
     
     # Check if running on Render
     is_render = os.getenv('RENDER') == 'true'
-    render_port = int(os.getenv('PORT', 10000))
+    port = int(os.getenv('PORT', 10000))
     
     if is_render:
         # For Render: We need to work with their port requirements
@@ -463,8 +458,8 @@ def main():
         logger.info("Bot started in polling mode on Render")
         
         # Run the Flask app in the main thread to satisfy Render's health checks
-        logger.info(f"Starting health check server on port {render_port}")
-        app.run(host='0.0.0.0', port=render_port)
+        logger.info(f"Starting health check server on port {port}")
+        app.run(host='0.0.0.0', port=port)
     else:
         # Local development
         updater.start_polling()
