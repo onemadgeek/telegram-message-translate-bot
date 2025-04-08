@@ -63,8 +63,8 @@ def test_google_api():
             ],
             max_tokens=20
         )
-        result = response.choices[0].message.content.strip()
-        logger.info(f"Google API test result: {result}")
+        # Don't log the actual content of the response
+        logger.info("Google API response received")
         return True
     except Exception as e:
         logger.error(f"Google API test failed: {e}")
@@ -191,7 +191,7 @@ def translate_text(text, target_language):
         import re
         import traceback
         
-        logger.info(f"Translating sentence to {target_language} with English pronunciation: '{text}'")
+        logger.info(f"Translating sentence to {target_language}")
         
         # Create the prompt
         system_prompt = (
@@ -276,7 +276,7 @@ def translate_text(text, target_language):
             f"\"{text}\""
         )
         
-        # Log the complete prompt
+        # Log the request (without the actual text)
         logger.info("Sending translation request to Google Gemini API")
         
         # Log completion parameters
@@ -307,13 +307,13 @@ def translate_text(text, target_language):
         
         result = response.choices[0].message.content.strip()
         
-        # Log the raw response
-        logger.info(f"RAW RESPONSE: {result}")
+        # Log without the actual response content
+        logger.info("Response received from Google Gemini API")
         
-        # Log information about the response
-        logger.info(f"RESPONSE INFO - Model: {getattr(response, 'model', 'unknown')}, Finish Reason: {getattr(response.choices[0], 'finish_reason', 'unknown')}")
+        # Log only the model info, not the response content
+        logger.info(f"Model used: {getattr(response, 'model', 'unknown')}")
         
-        logger.info(f"Translation result: '{text}' → '{result}'")
+        logger.info(f"Translation to {target_language} completed")
         
         # Enhanced clean up of the result
         # Remove any quotes, headings, etc.
@@ -336,15 +336,15 @@ def translate_text(text, target_language):
             if '-' in '.'.join(sentences[1:]):
                 result = sentences[0].strip() + '.'
         
-        # Log the cleaned result
+        # Log without the actual cleaned result
         if result != response.choices[0].message.content.strip():
-            logger.info(f"CLEANED RESULT: {result}")
+            logger.info("Cleaned translation result")
         
         return result
                 
     except Exception as e:
-        logger.error(f"Translation error: {e}")
-        logger.error(traceback.format_exc())
+        logger.error(f"Translation error occurred: {type(e).__name__}")
+        # Don't log the traceback as it might contain message content
         return text  # Return original text if translation fails
 
 # Command handler for /start
@@ -490,7 +490,7 @@ def process_message(update: Update, context: CallbackContext) -> None:
     # Log incoming message
     sender_username = update.effective_user.username or f"User{sender_id}"
     chat_title = update.effective_chat.title or f"Chat{chat_id}"
-    logger.info(f"Message received in '{chat_title}' from @{sender_username}: '{message_text[:50]}{'...' if len(message_text) > 50 else ''}'")
+    logger.info(f"Message received in '{chat_title}' from @{sender_username}")
     
     if not message_text:
         logger.info("Skipping empty message")
@@ -531,7 +531,7 @@ def process_message(update: Update, context: CallbackContext) -> None:
             translated = translate_text(message_text, settings['language'])
             
             if translated != message_text and translated.strip() != '':
-                logger.info(f"Translation successful: '{message_text}' → '{translated}'")
+                logger.info(f"Translation successful for User{user_id}")
                 
                 logger.info(f"Sending overlay translation to chat")
                 context.bot.send_message(
@@ -541,14 +541,14 @@ def process_message(update: Update, context: CallbackContext) -> None:
                 )
                 translation_count += 1
             else:
-                logger.info(f"No useful translation generated or translation matches original")
+                logger.info(f"No translation sent for User{user_id}")
         except Exception as e:
-            logger.error(f"Error during translation or sending: {e}")
+            logger.error(f"Error during translation or sending for User{user_id}: {type(e).__name__}")
     
     logger.info(f"Finished processing message {message_id} - Processed {users_count} users, sent {translation_count} translations")
 
 def error_handler(update: Update, context: CallbackContext) -> None:
-    logger.error(f"Update {update} caused error {context.error}")
+    logger.error(f"Bot encountered an error: {type(context.error).__name__}")
 
 def main():
     # Test Google API connectivity at startup
